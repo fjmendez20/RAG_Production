@@ -10,9 +10,9 @@ class ExternalLLM:
     """Cliente para LLM externo via API - Versión producción"""
     
     def __init__(self, api_key: str = None, base_url: str = None, model: str = None):
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
-        self.base_url = base_url or os.getenv("LLM_BASE_URL", "https://api.openai.com/v1")
-        self.model = model or os.getenv("LLM_MODEL", "gpt-3.5-turbo")
+        self.api_key = api_key or os.getenv("LLM_API_KEY")
+        self.base_url = base_url or os.getenv("LLM_BASE_URL")
+        self.model = model or os.getenv("LLM_MODEL")
         
         if not self.api_key:
             logger.error("❌ No se proporcionó API key para LLM")
@@ -51,9 +51,8 @@ Basándote ÚNICAMENTE en el contexto proporcionado, responde la pregunta:"""
                     {"role": "system", "content": system_message},
                     {"role": "user", "content": user_message}
                 ],
-                "max_tokens": max_tokens,
-                "temperature": 0.1,  # Muy baja temperatura para respuestas deterministas
-                "top_p": 0.9
+                "max_completion_tokens": max_tokens,
+                "temperature": 0.3
             }
             
             logger.info(f"Enviando solicitud a {self.base_url} con modelo {self.model}")

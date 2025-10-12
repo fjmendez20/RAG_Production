@@ -1,9 +1,11 @@
 fastapi==0.104.1
 uvicorn==0.24.0
 python-dotenv==1.0.0
-chromadb==0.4.0
+chromadb==0.4.22
 sentence-transformers==2.2.2
-pypdf2==3.0.0
-numpy==1.24.0
+pypdf2==3.0.1
+numpy==1.24.3
 requests==2.31.0
 pydantic==2.5.0
+pydantic-core==2.14.0
+typing-extensions==4.8.0
