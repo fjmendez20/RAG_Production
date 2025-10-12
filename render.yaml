@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: rag-production-api
+    env: python
+    plan: free
+    buildCommand: |
+      pip install -r requirements.txt
+      python -c "import nltk; nltk.download('punkt')"
+    startCommand: python api_prod.py
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: RAG_ENVIRONMENT
+        value: production
+      - key: ALLOWED_ORIGINS
+        value: "*"
