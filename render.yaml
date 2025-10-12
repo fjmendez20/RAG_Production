@@ -3,12 +3,6 @@ services:
     name: rag-api
     env: python
     plan: free
-    runtime: python
-    pythonVersion: "3.11"
-    buildCommand: pip install -r requirements.txt
+    pythonVersion: "3.11"  
+    buildCommand: pip install --upgrade pip setuptools wheel && pip install -r requirements.txt
     startCommand: uvicorn api_prod:app --host 0.0.0.0 --port $PORT
-    envVars:
-      - key: OPENAI_API_KEY
-        sync: false
-      - key: RAG_ENVIRONMENT
-        value: production
