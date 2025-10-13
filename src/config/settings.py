@@ -6,11 +6,10 @@ load_dotenv()
 
 @dataclass
 class EmbeddingConfig:
-    model_name: str = "sentence-transformers/all-MiniLM-L6-v2"  # Modelo liviano y rápido
+    # Modelo más pequeño y rápido
+    model_name: str = "sentence-transformers/paraphrase-MiniLM-L3-v2"
     device: str = "cpu"
     normalize_embeddings: bool = True
-    # Agregar configuración para cache de modelos
-    cache_folder: str = "/tmp/sentence_transformers"
 
 @dataclass
 class SplitterConfig:

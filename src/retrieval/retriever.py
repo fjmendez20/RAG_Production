@@ -78,8 +78,8 @@ class RAGRetriever:
     def retrieve_with_fallback(self, query: str, n_results: int = 4) -> Dict[str, Any]:
         """Recuperación con estrategia de fallback más robusta"""
         try:
-            # PRIMERO: Usar el método con fallback del vector store
-            results = self.vector_store.search_with_fallback(query, n_results)
+            # Usar umbral bajo desde el principio para una sola búsqueda
+            results = self.vector_store.search(query, n_results, similarity_threshold=0.3)
             
             if not results:
                 return {
@@ -90,41 +90,17 @@ class RAGRetriever:
                     "message": "No se encontró información relevante en los documentos."
                 }
             
-            # En producción, ser menos estricto con el filtrado
-            filtered_results = self._filter_for_production(query, results)
-            
-            if filtered_results:
-                best_document = self._get_best_document(filtered_results)
-                return {
-                    "query": query,
-                    "results": filtered_results,
-                    "count": len(filtered_results),
-                    "status": "success",
-                    "message": f"Encontrados {len(filtered_results)} documentos relevantes.",
-                    "best_document": best_document
-                }
-            else:
-                # Si el filtrado es muy estricto, devolver los mejores resultados encontrados
-                best_results = sorted(results, key=lambda x: x.get('similarity', 0), reverse=True)[:n_results]
-                if best_results:
-                    best_document = self._get_best_document(best_results)
-                    return {
-                        "query": query,
-                        "results": best_results,
-                        "count": len(best_results),
-                        "status": "success",
-                        "message": f"Encontrados {len(best_results)} documentos con información relacionada.",
-                        "best_document": best_document
-                    }
-                else:
-                    return {
-                        "query": query,
-                        "results": [],
-                        "count": 0,
-                        "status": "low_similarity",
-                        "message": "La información encontrada no es suficientemente relevante."
-                    }
-                    
+            # Procesar resultados
+            best_document = self._get_best_document(results)
+            return {
+                "query": query,
+                "results": results,
+                "count": len(results),
+                "status": "success",
+                "message": f"Encontrados {len(results)} documentos relevantes.",
+                "best_document": best_document
+            }
+                
         except Exception as e:
             logger.error(f"Error en recuperación con fallback: {e}")
             # Fallback a método básico

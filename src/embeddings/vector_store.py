@@ -16,17 +16,22 @@ class VectorStoreManager:
         # En producción, usar directorio temporal
         os.makedirs(config.vector_store.persist_directory, exist_ok=True)
         
-        # Configurar ChromaDB para usar NUESTRO modelo de embeddings, no el de Chroma
+        # Configuración específica para deshabilitar embeddings de Chroma
         self.client = chromadb.PersistentClient(
             path=config.vector_store.persist_directory,
-            settings=chromadb.Settings(anonymized_telemetry=False)
+            settings=chromadb.Settings(
+                anonymized_telemetry=False,
+                allow_reset=True
+            )
         )
         self.collection = self._get_or_create_collection()
     
     def _get_or_create_collection(self):
         """Obtiene o crea la colección en ChromaDB"""
         try:
-            collection = self.client.get_collection(self.config.vector_store.collection_name)
+            collection = self.client.get_collection(
+                self.config.vector_store.collection_name
+            )
             logger.info(f"Colección existente cargada: {self.config.vector_store.collection_name}")
             return collection
         except Exception:
@@ -38,7 +43,7 @@ class VectorStoreManager:
             return collection
     
     def add_documents(self, documents: List[str], metadatas: List[Dict] = None) -> bool:
-        """Añade documentos a la base vectorial - USANDO NUESTROS EMBEDDINGS"""
+        """Añade documentos a la base vectorial usando NUESTROS embeddings"""
         try:
             if not documents:
                 logger.warning("No hay documentos para añadir")
@@ -47,7 +52,12 @@ class VectorStoreManager:
             logger.info(f"Generando embeddings para {len(documents)} documentos...")
             
             # Generar embeddings con NUESTRO modelo
-            embeddings = self.embedding_model.encode(documents).tolist()
+            embeddings = self.embedding_model.encode(
+                documents, 
+                show_progress_bar=True,
+                batch_size=32,
+                convert_to_tensor=False
+            ).tolist()
             
             # Preparar metadatas e IDs
             if metadatas is None:
@@ -77,12 +87,16 @@ class VectorStoreManager:
             logger.info(f"Buscando: '{query}'")
             
             # Generar embedding de la consulta con NUESTRO modelo
-            query_embedding = self.embedding_model.encode([query]).tolist()
+            query_embedding = self.embedding_model.encode(
+                [query], 
+                show_progress_bar=False,
+                convert_to_tensor=False
+            ).tolist()
             
             # Buscar usando nuestro embedding
             search_results = self.collection.query(
                 query_embeddings=query_embedding,  # Usar nuestro embedding
-                n_results=n_results * 2,
+                n_results=min(n_results * 2, 20),
                 include=["documents", "metadatas", "distances"]
             )
             
