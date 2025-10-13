@@ -1,24 +1,8 @@
-# Core API
 fastapi==0.104.1
 uvicorn==0.24.0
 python-dotenv==1.0.0
-
-# ChromaDB sin compilación
 chromadb==0.4.22
-
-# Sentence transformers SIN compilación
-sentence-transformers==2.2.2
-
-# Procesamiento de documentos
 pypdf==3.17.4
-
-# Dependencias base
 numpy==1.24.3
 requests==2.31.0
-
-# Pydantic
 pydantic==1.10.12
-typing-extensions==4.8.0
-
-# Evitar compilación
---no-binary=all
