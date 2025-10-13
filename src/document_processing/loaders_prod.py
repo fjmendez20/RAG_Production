@@ -289,13 +289,13 @@ class ProductionDocumentLoader:
         """Extrae texto de un PDF con múltiples métodos"""
         extracted_text = ""
         
-        # Método 1: PyPDF2 (primario)
+        # Método 1: pypdf (primario)
         try:
-            import PyPDF2
+            from pypdf import PdfReader
             from io import BytesIO
             
             with BytesIO(pdf_content) as pdf_file:
-                reader = PyPDF2.PdfReader(pdf_file)
+                reader = PdfReader(pdf_file)
                 text = ""
                 for page in reader.pages:
                     page_text = page.extract_text()
@@ -303,12 +303,12 @@ class ProductionDocumentLoader:
                         text += page_text + "\n"
                 extracted_text = text.strip()
                 if extracted_text:
-                    logger.info("✅ PDF extraído con PyPDF2")
+                    logger.info("✅ PDF extraído con pypdf")
                     return extracted_text
         except Exception as e:
-            logger.warning(f"PyPDF2 no pudo extraer texto: {e}")
+            logger.warning(f"pypdf no pudo extraer texto: {e}")
         
-        # Método 2: PyMuPDF (fallback)
+        # Método 2: PyMuPDF (fallback - muy potente)
         try:
             import fitz
             doc = fitz.open(stream=pdf_content, filetype="pdf")
@@ -327,7 +327,7 @@ class ProductionDocumentLoader:
         except Exception as e:
             logger.warning(f"PyMuPDF no pudo extraer texto: {e}")
         
-        # Método 3: pdfplumber (fallback)
+        # Método 3: pdfplumber (fallback - bueno para PDFs complejos)
         try:
             import pdfplumber
             with pdfplumber.open(stream=pdf_content) as pdf:
