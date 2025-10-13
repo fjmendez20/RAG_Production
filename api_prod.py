@@ -50,7 +50,7 @@ app.add_middleware(
 # Modelos Pydantic
 class QueryRequest(BaseModel):
     question: str
-    n_results: int = 3
+    n_results: int = 4  # Cambiado a 4 por defecto
     use_llm: bool = True
 
 class QueryResponse(BaseModel):
@@ -89,7 +89,7 @@ class ProductionRAGSystem:
         """Configura el cliente LLM"""
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
-            logger.warning("❌ OPENAI_API_KEY no configurada")
+            logger.warning("❌ OPENAI_API_KEY no configurada - LLM no disponible")
             return None
         
         try:
@@ -105,15 +105,25 @@ class ProductionRAGSystem:
     def initialize(self, document_sources: List[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Inicializa el sistema con documentos"""
         try:
+            # Limpiar colección existente primero
+            self.vector_store.clear_collection()
+            
             if document_sources is None:
-                # Fuentes por defecto
+                # Fuentes por defecto MEJORADAS
                 document_sources = [
                     {
                         "type": "raw_text",
                         "texts": [
-                            "Python es un lenguaje de programación interpretado, de alto nivel y de propósito general.",
-                            "Los sistemas RAG combinan recuperación de información con generación de texto.",
-                            "Los vikingos eran pueblos nórdicos originarios de Escandinavia entre los siglos VIII y XI."
+                            "San Andrés es una isla colombiana ubicada en el mar Caribe, a 775 km al noroeste de la costa continental de Colombia.",
+                            "El archipiélago de San Andrés, Providencia y Santa Catalina es un departamento de Colombia situado en aguas del mar Caribe.",
+                            "San Andrés es conocida por sus playas de arena blanca, aguas cristalinas y arrecifes de coral ideales para el buceo.",
+                            "Para llegar a San Andrés se puede tomar un vuelo desde varias ciudades de Colombia como Bogotá, Medellín o Cartagena.",
+                            "El clima en San Andrés es tropical con temperaturas que oscilan entre 26°C y 32°C durante todo el año.",
+                            "La isla de San Andrés tiene una superficie de 26 km² y es la más grande del archipiélago.",
+                            "El idioma oficial en San Andrés es el español, pero también se habla criollo sanandresano e inglés.",
+                            "La economía de San Andrés se basa principalmente en el turismo y el comercio libre.",
+                            "Los vikingos eran pueblos nórdicos originarios de Escandinavia entre los siglos VIII y XI.",
+                            "Python es un lenguaje de programación interpretado, de alto nivel y de propósito general."
                         ]
                     }
                 ]
@@ -127,7 +137,10 @@ class ProductionRAGSystem:
                 return {"success": False, "message": "No se pudieron cargar documentos"}
             
             # Procesar documentos
+            logger.info(f"Dividiendo {len(all_documents)} documentos en chunks...")
             chunks = self.document_splitter.split_documents(all_documents)
+            
+            logger.info(f"Agregando {len(chunks)} chunks a la base vectorial...")
             success = self.vector_store.add_documents(chunks)
             
             if success:
@@ -145,7 +158,7 @@ class ProductionRAGSystem:
             logger.error(f"Error en inicialización: {e}")
             return {"success": False, "message": f"Error: {str(e)}"}
     
-    def query(self, question: str, n_results: int = 3, use_llm: bool = True) -> Dict[str, Any]:
+    def query(self, question: str, n_results: int = 4, use_llm: bool = True) -> Dict[str, Any]:
         """Realiza una consulta al sistema"""
         import time
         start_time = time.time()
@@ -153,10 +166,11 @@ class ProductionRAGSystem:
         try:
             if not self.initialized:
                 # Auto-inicializar si no está inicializado
+                logger.info("Sistema no inicializado, auto-inicializando...")
                 self.initialize()
             
-            # Recuperar documentos
-            retrieval_result = self.retriever.retrieve(question, n_results)
+            # Recuperar documentos usando el método con fallback
+            retrieval_result = self.retriever.retrieve_with_fallback(question, n_results)
             status = retrieval_result["status"]
             llm_used = False
             
@@ -182,13 +196,13 @@ class ProductionRAGSystem:
                     answer_type = "direct"
             
             elif status == "no_relevant_documents":
-                answer = "No encontré información relevante en los documentos."
+                answer = "No encontré información relevante en los documentos. ¿Podrías reformular tu pregunta?"
                 answer_type = "no_documents"
             elif status == "low_similarity":
-                answer = "La información encontrada no es suficientemente relevante."
+                answer = "Encontré información relacionada pero no exactamente lo que buscas. ¿Quieres que te muestre lo que encontré?"
                 answer_type = "low_similarity"
             else:
-                answer = f"Error: {retrieval_result.get('error', 'Desconocido')}"
+                answer = f"Error técnico: {retrieval_result.get('error', 'Desconocido')}"
                 answer_type = "error"
             
             processing_time = time.time() - start_time
@@ -201,20 +215,21 @@ class ProductionRAGSystem:
                 "status": status,
                 "answer_type": answer_type,
                 "llm_used": llm_used,
-                "processing_time": processing_time
+                "processing_time": round(processing_time, 2)
             }
             
         except Exception as e:
             logger.error(f"Error en consulta: {e}")
+            processing_time = time.time() - start_time
             return {
                 "question": question,
-                "answer": "Error técnico procesando la consulta.",
+                "answer": "Error técnico procesando la consulta. Por favor, intenta nuevamente.",
                 "retrieved_documents": [],
                 "document_count": 0,
                 "status": "error",
                 "answer_type": "error",
                 "llm_used": False,
-                "processing_time": time.time() - start_time
+                "processing_time": round(processing_time, 2)
             }
     
     def get_system_info(self) -> Dict[str, Any]:
@@ -269,6 +284,16 @@ async def query_system(request: QueryRequest):
         use_llm=request.use_llm
     )
     return QueryResponse(**result)
+
+@app.post("/clear")
+async def clear_system():
+    """Limpia la base de datos vectorial"""
+    try:
+        rag_system.vector_store.clear_collection()
+        rag_system.initialized = False
+        return {"success": True, "message": "Sistema limpiado correctamente"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error limpiando sistema: {str(e)}")
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
