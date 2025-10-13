@@ -22,7 +22,11 @@ from src.embeddings.vector_store import VectorStoreManager
 from src.retrieval.retriever import RAGRetriever
 from src.llm.external_llm import ExternalLLM
 
-# Configurar logging
+# Suprimir logs de telemetría de ChromaDB
+logging.getLogger('chromadb.telemetry.product.posthog').setLevel(logging.CRITICAL)
+logging.getLogger('chromadb.telemetry.product').setLevel(logging.CRITICAL)
+
+# Tu configuración actual de logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
