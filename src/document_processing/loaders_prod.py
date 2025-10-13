@@ -43,50 +43,50 @@ class ProductionDocumentLoader:
         documents = []
         
         try:
-            # Extraer información del repositorio de la URL
-            repo_info = self._extract_repo_info(base_url)
-            if not repo_info:
-                logger.error("No se pudo extraer información del repositorio de la URL")
-                return documents
+            # Primero intentar cargar archivos específicos comunes
+            common_files = self._discover_files_by_pattern(base_url, file_pattern, max_files)
             
-            # Construir URL del repositorio en GitHub
-            github_repo_url = f"https://github.com/{repo_info['owner']}/{repo_info['repo']}"
-            logger.info(f"Buscando archivos en repositorio: {github_repo_url}")
-            
-            # Intentar obtener lista de archivos via GitHub API
-            files = self._get_repo_files_via_api(repo_info['owner'], repo_info['repo'])
-            
-            if not files:
-                # Fallback: buscar archivos por patrón directamente en GitHub Pages
-                files = self._discover_files_by_pattern(base_url, file_pattern, max_files)
-            
-            if not files:
+            if not common_files:
                 logger.warning("No se encontraron archivos que coincidan con el patrón")
                 return documents
             
-            logger.info(f"Encontrados {len(files)} archivos: {files}")
+            logger.info(f"Encontrados {len(common_files)} archivos: {common_files}")
             
             # Cargar cada archivo encontrado
-            for file_path in files:
+            for file_path in common_files:
                 try:
                     # Construir URL completa en GitHub Pages
-                    if file_path.startswith('http'):
-                        url = file_path
-                    else:
-                        url = urljoin(base_url.rstrip('/') + '/', file_path.lstrip('/'))
+                    url = urljoin(base_url.rstrip('/') + '/', file_path.lstrip('/'))
                     
                     logger.info(f"Descargando: {url}")
                     
                     response = requests.get(url, timeout=30)
                     response.raise_for_status()
                     
+                    # Guardar archivo temporalmente para debug
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
+                        tmp_file.write(response.content)
+                        tmp_path = tmp_file.name
+                    
                     # Extraer contenido
                     content = self._extract_content_from_file(response.content, file_path, url)
+                    
+                    # Limpiar archivo temporal
+                    try:
+                        os.unlink(tmp_path)
+                    except:
+                        pass
+                    
                     if content and len(content.strip()) > 10:  # Validar que tenga contenido
                         documents.append(content)
                         logger.info(f"✅ Cargado: {file_path} ({len(content)} caracteres)")
                     else:
                         logger.warning(f"⚠️ Contenido vacío o muy corto en: {file_path}")
+                        # Intentar métodos alternativos de extracción
+                        alternative_content = self._extract_with_alternative_methods(response.content, file_path)
+                        if alternative_content and len(alternative_content.strip()) > 10:
+                            documents.append(alternative_content)
+                            logger.info(f"✅ Cargado (método alternativo): {file_path}")
                         
                 except Exception as e:
                     logger.error(f"❌ Error cargando {file_path}: {e}")
@@ -98,6 +98,42 @@ class ProductionDocumentLoader:
         logger.info(f"Total de documentos cargados automáticamente: {len(documents)}")
         return documents
     
+    def _extract_with_alternative_methods(self, content: bytes, file_path: str) -> str:
+        """Intenta extraer contenido con métodos alternativos"""
+        file_ext = file_path.lower().split('.')[-1] if '.' in file_path else ''
+        
+        if file_ext == 'pdf':
+            # Método 2: PyMuPDF (si está disponible)
+            try:
+                import fitz  # PyMuPDF
+                doc = fitz.open(stream=content, filetype="pdf")
+                text = ""
+                for page in doc:
+                    text += page.get_text() + "\n"
+                doc.close()
+                if text.strip():
+                    return text
+            except ImportError:
+                logger.info("PyMuPDF no disponible")
+            except Exception as e:
+                logger.error(f"Error con PyMuPDF: {e}")
+            
+            # Método 3: pdfplumber (si está disponible)
+            try:
+                import pdfplumber
+                with pdfplumber.open(stream=content) as pdf:
+                    text = ""
+                    for page in pdf.pages:
+                        if page.extract_text():
+                            text += page.extract_text() + "\n"
+                    return text
+            except ImportError:
+                logger.info("pdfplumber no disponible")
+            except Exception as e:
+                logger.error(f"Error con pdfplumber: {e}")
+        
+        return ""
+    
     def _extract_repo_info(self, github_pages_url: str) -> Dict[str, str]:
         """Extrae información del repositorio de la URL de GitHub Pages"""
         try:
@@ -108,11 +144,9 @@ class ProductionDocumentLoader:
             if 'github.io' in parsed.netloc:
                 if len(path_parts) >= 1:
                     repo_name = path_parts[0]
-                    username = parsed.netloc.split('.')[0]  # Extraer username del dominio
+                    username = parsed.netloc.split('.')[0]
                     return {'owner': username, 'repo': repo_name}
             
-            # Para URLs personalizadas, intentar extraer de diferentes formatos
-            logger.warning("No se pudo extraer información automáticamente del repositorio")
             return {}
             
         except Exception as e:
@@ -120,9 +154,8 @@ class ProductionDocumentLoader:
             return {}
     
     def _get_repo_files_via_api(self, owner: str, repo: str) -> List[str]:
-        """Intenta obtener lista de archivos via GitHub API (requiere token)"""
+        """Intenta obtener lista de archivos via GitHub API"""
         try:
-            # Sin token de GitHub, las llamadas API son limitadas
             api_url = f"https://api.github.com/repos/{owner}/{repo}/contents/"
             response = requests.get(api_url, timeout=10)
             
@@ -138,11 +171,11 @@ class ProductionDocumentLoader:
                 
                 return file_paths
             else:
-                logger.info(f"GitHub API no disponible (status: {response.status_code}), usando descubrimiento directo")
+                logger.info(f"GitHub API no disponible (status: {response.status_code})")
                 return []
                 
         except Exception as e:
-            logger.info(f"GitHub API no disponible: {e}, usando descubrimiento directo")
+            logger.info(f"GitHub API no disponible: {e}")
             return []
     
     def _discover_files_by_pattern(self, base_url: str, file_pattern: str, max_files: int = 20) -> List[str]:
@@ -172,7 +205,7 @@ class ProductionDocumentLoader:
                     if self._check_file_exists(test_url):
                         discovered_files.append(test_file)
                         logger.info(f"✅ Descubierto: {test_file}")
-                        break  # Pasar al siguiente número
+                        break
         
         return discovered_files
     
@@ -188,7 +221,6 @@ class ProductionDocumentLoader:
         """Carga documentos específicos desde GitHub Pages"""
         documents = []
         
-        # Combinar files y paths
         all_files = files or []
         if paths:
             all_files.extend(paths)
@@ -200,23 +232,25 @@ class ProductionDocumentLoader:
         for file_path in all_files:
             try:
                 # Construir URL completa
-                if file_path.startswith('http'):
-                    url = file_path
-                else:
-                    url = urljoin(base_url.rstrip('/') + '/', file_path.lstrip('/'))
+                url = urljoin(base_url.rstrip('/') + '/', file_path.lstrip('/'))
                 
                 logger.info(f"Descargando desde GitHub Pages: {url}")
                 
                 response = requests.get(url, timeout=30)
                 response.raise_for_status()
                 
-                # Extraer contenido basado en el tipo de archivo
+                # Extraer contenido
                 content = self._extract_content_from_file(response.content, file_path, url)
-                if content:
+                if content and len(content.strip()) > 10:
                     documents.append(content)
                     logger.info(f"✅ Documento cargado: {file_path} ({len(content)} caracteres)")
                 else:
-                    logger.warning(f"⚠️ No se pudo extraer contenido de: {file_path}")
+                    logger.warning(f"⚠️ Contenido vacío en: {file_path}")
+                    # Intentar métodos alternativos
+                    alternative_content = self._extract_with_alternative_methods(response.content, file_path)
+                    if alternative_content and len(alternative_content.strip()) > 10:
+                        documents.append(alternative_content)
+                        logger.info(f"✅ Cargado (método alternativo): {file_path}")
                     
             except Exception as e:
                 logger.error(f"❌ Error cargando {file_path} desde GitHub Pages: {e}")
@@ -233,7 +267,8 @@ class ProductionDocumentLoader:
             if file_ext in ['pdf']:
                 return self._extract_text_from_pdf(content)
             elif file_ext in ['txt', 'md', 'rst']:
-                return content.decode('utf-8')
+                text_content = content.decode('utf-8')
+                return text_content if text_content.strip() else ""
             elif file_ext in ['html', 'htm']:
                 return self._extract_text_from_html(content)
             elif file_ext in ['json']:
@@ -242,14 +277,8 @@ class ProductionDocumentLoader:
                 # Intentar decodificar como texto plano
                 try:
                     text_content = content.decode('utf-8')
-                    # Si parece texto legible, devolverlo
-                    if len(text_content) > 10 and any(char.isalpha() for char in text_content):
-                        return text_content
-                    else:
-                        logger.warning(f"Contenido no legible en {file_path}")
-                        return ""
+                    return text_content if text_content.strip() and any(char.isalpha() for char in text_content) else ""
                 except:
-                    logger.warning(f"No se pudo decodificar {file_path}")
                     return ""
                     
         except Exception as e:
@@ -257,9 +286,11 @@ class ProductionDocumentLoader:
             return ""
     
     def _extract_text_from_pdf(self, pdf_content: bytes) -> str:
-        """Extrae texto de un PDF"""
+        """Extrae texto de un PDF con múltiples métodos"""
+        extracted_text = ""
+        
+        # Método 1: PyPDF2 (primario)
         try:
-            # Intentar con PyPDF2 si está disponible
             import PyPDF2
             from io import BytesIO
             
@@ -267,14 +298,55 @@ class ProductionDocumentLoader:
                 reader = PyPDF2.PdfReader(pdf_file)
                 text = ""
                 for page in reader.pages:
-                    text += page.extract_text() + "\n"
-                return text.strip()
-        except ImportError:
-            logger.warning("PyPDF2 no disponible, no se puede extraer texto de PDF")
-            return "[[Contenido PDF - instala PyPDF2 para extraer texto]]"
+                    page_text = page.extract_text()
+                    if page_text:
+                        text += page_text + "\n"
+                extracted_text = text.strip()
+                if extracted_text:
+                    logger.info("✅ PDF extraído con PyPDF2")
+                    return extracted_text
         except Exception as e:
-            logger.error(f"Error extrayendo texto de PDF: {e}")
-            return f"[[Error extrayendo texto del PDF: {str(e)}]]"
+            logger.warning(f"PyPDF2 no pudo extraer texto: {e}")
+        
+        # Método 2: PyMuPDF (fallback)
+        try:
+            import fitz
+            doc = fitz.open(stream=pdf_content, filetype="pdf")
+            text = ""
+            for page in doc:
+                page_text = page.get_text()
+                if page_text:
+                    text += page_text + "\n"
+            doc.close()
+            extracted_text = text.strip()
+            if extracted_text:
+                logger.info("✅ PDF extraído con PyMuPDF")
+                return extracted_text
+        except ImportError:
+            logger.info("PyMuPDF no disponible")
+        except Exception as e:
+            logger.warning(f"PyMuPDF no pudo extraer texto: {e}")
+        
+        # Método 3: pdfplumber (fallback)
+        try:
+            import pdfplumber
+            with pdfplumber.open(stream=pdf_content) as pdf:
+                text = ""
+                for page in pdf.pages:
+                    page_text = page.extract_text()
+                    if page_text:
+                        text += page_text + "\n"
+                extracted_text = text.strip()
+                if extracted_text:
+                    logger.info("✅ PDF extraído con pdfplumber")
+                    return extracted_text
+        except ImportError:
+            logger.info("pdfplumber no disponible")
+        except Exception as e:
+            logger.warning(f"pdfplumber no pudo extraer texto: {e}")
+        
+        logger.error("❌ No se pudo extraer texto del PDF con ningún método")
+        return ""
     
     def _extract_text_from_html(self, html_content: bytes) -> str:
         """Extrae texto limpio de HTML"""
@@ -282,21 +354,16 @@ class ProductionDocumentLoader:
             from bs4 import BeautifulSoup
             soup = BeautifulSoup(html_content, 'html.parser')
             
-            # Remover scripts y styles
             for script in soup(["script", "style", "nav", "header", "footer"]):
                 script.decompose()
             
-            # Obtener texto
             text = soup.get_text()
-            
-            # Limpiar espacios múltiples y saltos de línea
             lines = (line.strip() for line in text.splitlines())
             chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
             text = ' '.join(chunk for chunk in chunks if chunk)
             
             return text
         except ImportError:
-            logger.warning("BeautifulSoup no disponible, devolviendo HTML crudo")
             return html_content.decode('utf-8')
         except Exception as e:
             logger.error(f"Error extrayendo texto de HTML: {e}")
@@ -308,21 +375,20 @@ class ProductionDocumentLoader:
             import json
             data = json.loads(json_content.decode('utf-8'))
             
-            # Intentar extraer texto de campos comunes
             text_parts = []
             
-            def extract_text(obj, current_path=""):
+            def extract_text(obj):
                 if isinstance(obj, dict):
                     for key, value in obj.items():
-                        if isinstance(value, (str, int, float)) and len(str(value)) > 10:
+                        if isinstance(value, str) and len(value) > 10:
                             text_parts.append(f"{key}: {value}")
                         else:
-                            extract_text(value, f"{current_path}.{key}" if current_path else key)
+                            extract_text(value)
                 elif isinstance(obj, list):
-                    for i, item in enumerate(obj):
-                        extract_text(item, f"{current_path}[{i}]")
-                elif isinstance(obj, (str, int, float)) and len(str(obj)) > 10:
-                    text_parts.append(str(obj))
+                    for item in obj:
+                        extract_text(item)
+                elif isinstance(obj, str) and len(obj) > 10:
+                    text_parts.append(obj)
             
             extract_text(data)
             return "\n".join(text_parts)
@@ -340,15 +406,11 @@ class ProductionDocumentLoader:
                 response = requests.get(url, timeout=30)
                 response.raise_for_status()
                 
-                # Extraer nombre de archivo de la URL
                 file_name = url.split('/')[-1] if '/' in url else 'document'
-                
                 content = self._extract_content_from_file(response.content, file_name, url)
                 if content:
                     documents.append(content)
                     logger.info(f"✅ Documento cargado desde: {url}")
-                else:
-                    logger.warning(f"⚠️ No se pudo extraer contenido de: {url}")
                 
             except Exception as e:
                 logger.error(f"❌ Error cargando {url}: {e}")
@@ -357,22 +419,19 @@ class ProductionDocumentLoader:
         return documents
     
     def create_sample_sources(self) -> List[Dict[str, Any]]:
-        """Crea fuentes de ejemplo para inicialización (ahora vacío)"""
+        """Crea fuentes de ejemplo para inicialización"""
         return []
     
     def test_github_pages_connection(self, base_url: str) -> Dict[str, Any]:
         """Método para probar la conexión con GitHub Pages"""
         try:
-            # Probar conexión básica
             response = requests.get(base_url, timeout=10)
             status = "✅ Conectado" if response.status_code == 200 else f"❌ Error {response.status_code}"
             
-            # Probar si existe doc1.pdf
             test_file_url = urljoin(base_url.rstrip('/') + '/', 'doc1.pdf')
             test_response = requests.head(test_file_url, timeout=5)
             file_status = "✅ Existe" if test_response.status_code == 200 else "❌ No existe"
             
-            # Detectar archivos automáticamente
             discovered_files = self._discover_files_by_pattern(base_url, 'doc*.pdf', 10)
             
             return {

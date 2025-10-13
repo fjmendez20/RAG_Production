@@ -245,6 +245,48 @@ rag_system = ProductionRAGSystem()
 async def root():
     return {"message": "RAG Production API", "status": "running"}
 
+#endpoint temporal 
+@app.post("/debug/load-documents")
+async def debug_load_documents():
+    """Endpoint para debuguear la carga de documentos"""
+    try:
+        from src.document_processing.loaders_prod import ProductionDocumentLoader
+        
+        loader = ProductionDocumentLoader()
+        
+        # Probar conexión con GitHub Pages
+        test_result = loader.test_github_pages_connection("https://fjmendez20.github.io/Documentos_RAG")
+        
+        # Intentar cargar doc1.pdf específicamente
+        document_sources = [{
+            "type": "github_pages",
+            "base_url": "https://fjmendez20.github.io/Documentos_RAG",
+            "files": ["doc1.pdf"]
+        }]
+        
+        documents = loader.load_from_source(document_sources[0])
+        
+        # Analizar el contenido extraído
+        content_analysis = []
+        for i, doc in enumerate(documents):
+            content_analysis.append({
+                "document_index": i,
+                "content_length": len(doc),
+                "content_preview": doc[:500] + "..." if len(doc) > 500 else doc,
+                "is_empty": len(doc.strip()) == 0,
+                "has_text": any(char.isalpha() for char in doc)
+            })
+        
+        return {
+            "test_connection": test_result,
+            "documents_loaded": len(documents),
+            "content_analysis": content_analysis,
+            "raw_documents": documents if len(documents) <= 3 else ["... demasiados documentos para mostrar ..."]
+        }
+        
+    except Exception as e:
+        return {"error": str(e)}
+
 @app.get("/health")
 async def health_check():
     info = rag_system.get_system_info()
