@@ -1,9 +1,11 @@
 services:
   - type: web
-    name: rag-api-production
+    name: rag-production
     env: python
     plan: free
-    buildCommand: pip install --upgrade pip setuptools wheel && pip install -r requirements.txt
+    region: oregon  # o tu región preferida
+    pythonVersion: "3.11.9"  # FORZAR Python 3.11
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
     startCommand: uvicorn api_prod:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: OPENAI_API_KEY

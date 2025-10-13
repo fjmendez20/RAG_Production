@@ -3,17 +3,11 @@ fastapi==0.104.1
 uvicorn==0.24.0
 python-dotenv==1.0.0
 
-# ChromaDB (sin compilación)
-chromadb==0.4.15
+# ChromaDB sin dependencias problemáticas
+chromadb==0.4.22
 
-# Sentence Transformers (versiones compatibles)
+# Sentence transformers SIN compilación
 sentence-transformers==2.2.2
-transformers==4.30.2
-tokenizers==0.15.0
-
-# PyTorch (versión CPU precompilada)
-torch==2.0.1
-torchvision==0.15.2
 
 # Procesamiento de documentos
 pypdf==3.17.4
@@ -26,8 +20,5 @@ requests==2.31.0
 pydantic==1.10.12
 typing-extensions==4.8.0
 
-# Otras dependencias
-anyio==3.7.1
-h11==0.14.0
-sniffio==1.3.0
-click==8.1.7
+# Evitar tokenizers que necesitan Rust
+# NO incluir: transformers, tokenizers, torch
