@@ -1,10 +1,28 @@
+# Core API
 fastapi==0.104.1
 uvicorn==0.24.0
 python-dotenv==1.0.0
+
+# ChromaDB sin compilación
 chromadb==0.4.22
+
+# Sentence transformers sin Rust compilation
 sentence-transformers==2.2.2
+--find-links https://download.pytorch.org/whl/cpu/torch_stable.html
+torch==2.0.1+cpu
+torchvision==0.15.2+cpu
+transformers==4.30.2
+
+# Procesamiento de documentos
 pypdf==5.1.0
-numpy==1.26.4
+
+# Dependencias base
+numpy==1.24.3
 requests==2.31.0
+
+# Pydantic
 pydantic==2.5.0
 typing-extensions==4.8.0
+
+# Evitar compilación
+tokenizers==0.15.0
