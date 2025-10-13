@@ -18,8 +18,23 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Copiar el código de la aplicación
 COPY . .
 
-# Crear directorio para ChromaDB
-RUN mkdir -p /tmp/chroma_db
+# Configurar variables de entorno para optimización
+ENV CHROMA_DB_PATH=/app/chroma_db
+ENV ANONYMIZED_TELEMETRY=false
+ENV PERSIST_DIRECTORY=/app/chroma_db
+ENV IS_PERSISTENT_TO_DISK=true
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
+
+# Crear directorios necesarios
+RUN mkdir -p /app/chroma_db
+RUN mkdir -p /root/.cache/chroma
+RUN mkdir -p /root/.cache/sentence_transformers
+RUN mkdir -p /root/.cache/torch
+RUN mkdir -p /root/.cache/huggingface
+
+# Limpiar cache de apt
+RUN apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Exponer puerto
 EXPOSE 8000

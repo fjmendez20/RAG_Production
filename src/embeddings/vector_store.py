@@ -16,7 +16,11 @@ class VectorStoreManager:
         # En producción, usar directorio temporal
         os.makedirs(config.vector_store.persist_directory, exist_ok=True)
         
-        self.client = chromadb.PersistentClient(path=config.vector_store.persist_directory)
+        # Configurar ChromaDB para usar NUESTRO modelo de embeddings, no el de Chroma
+        self.client = chromadb.PersistentClient(
+            path=config.vector_store.persist_directory,
+            settings=chromadb.Settings(anonymized_telemetry=False)
+        )
         self.collection = self._get_or_create_collection()
     
     def _get_or_create_collection(self):
@@ -28,19 +32,22 @@ class VectorStoreManager:
         except Exception:
             collection = self.client.create_collection(
                 name=self.config.vector_store.collection_name,
-                metadata={"hnsw:space": "cosine"}  # Fuerza cosine similarity
+                metadata={"hnsw:space": "cosine"}
             )
             logger.info(f"Nueva colección creada: {self.config.vector_store.collection_name}")
             return collection
     
     def add_documents(self, documents: List[str], metadatas: List[Dict] = None) -> bool:
-        """Añade documentos a la base vectorial - DEJA QUE CHROMADB MANEJE LOS EMBEDDINGS"""
+        """Añade documentos a la base vectorial - USANDO NUESTROS EMBEDDINGS"""
         try:
             if not documents:
                 logger.warning("No hay documentos para añadir")
                 return False
             
-            logger.info(f"Procesando {len(documents)} documentos...")
+            logger.info(f"Generando embeddings para {len(documents)} documentos...")
+            
+            # Generar embeddings con NUESTRO modelo
+            embeddings = self.embedding_model.encode(documents).tolist()
             
             # Preparar metadatas e IDs
             if metadatas is None:
@@ -48,10 +55,11 @@ class VectorStoreManager:
             
             ids = [f"doc_{i}_{hash(doc[:50])}" for i, doc in enumerate(documents)]
             
-            # DEJA QUE CHROMADB GENERE LOS EMBEDDINGS AUTOMÁTICAMENTE
+            # Añadir a la colección CON NUESTROS EMBEDDINGS
             logger.info("Añadiendo documentos a la base vectorial...")
             self.collection.add(
-                documents=documents,  # Solo pasa los documentos
+                embeddings=embeddings,  # Proveer nuestros embeddings
+                documents=documents,
                 metadatas=metadatas,
                 ids=ids
             )
@@ -63,19 +71,18 @@ class VectorStoreManager:
             logger.error(f"❌ Error añadiendo documentos: {e}")
             return False
     
-    def search(self, query: str, n_results: int = None, similarity_threshold: float = None) -> List[Dict[str, Any]]:
-        """Busca documentos similares a la consulta"""
-        if n_results is None:
-            n_results = self.config.search.default_n_results
-        if similarity_threshold is None:
-            similarity_threshold = self.config.search.similarity_threshold
+    def search(self, query: str, n_results: int = 4, similarity_threshold: float = 0.3) -> List[Dict[str, Any]]:
+        """Busca documentos similares usando NUESTROS EMBEDDINGS"""
         try:
             logger.info(f"Buscando: '{query}'")
             
-            # DEJA QUE CHROMADB MANEJE LA BÚSQUEDA CON SU PROPIO EMBEDDING
+            # Generar embedding de la consulta con NUESTRO modelo
+            query_embedding = self.embedding_model.encode([query]).tolist()
+            
+            # Buscar usando nuestro embedding
             search_results = self.collection.query(
-                query_texts=[query],
-                n_results=n_results * 2,  # Buscar más para filtrar después
+                query_embeddings=query_embedding,  # Usar nuestro embedding
+                n_results=n_results * 2,
                 include=["documents", "metadatas", "distances"]
             )
             
@@ -84,14 +91,14 @@ class VectorStoreManager:
                 logger.info("No se encontraron documentos")
                 return []
             
-            # Filtrar por similitud
+            # Procesar resultados
             filtered_results = []
             documents = search_results['documents'][0]
             metadatas = search_results['metadatas'][0]
             distances = search_results['distances'][0] if search_results['distances'] else []
             
             for i in range(len(documents)):
-                # Convertir distancia a similitud (cosine distance -> similarity)
+                # Convertir distancia a similitud
                 similarity = 1 - distances[i] if distances else 1.0
                 
                 if similarity >= similarity_threshold:

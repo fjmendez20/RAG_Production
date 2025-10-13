@@ -106,7 +106,7 @@ class ProductionRAGSystem:
         """Inicializa el sistema con documentos"""
         try:
             # Limpiar colección existente primero
-            self.vector_store.clear_collection()
+            #self.vector_store.clear_collection()
             
             if document_sources is None:
                 # Fuentes por defecto MEJORADAS

@@ -20,13 +20,10 @@ class SplitterConfig:
 
 @dataclass
 class VectorStoreConfig:
-    # En producción, usar directorio persistente
-    persist_directory: str = os.getenv("CHROMA_DB_PATH", "/tmp/chroma_db")
+    # Usar path dentro del contenedor
+    persist_directory: str = os.getenv("CHROMA_DB_PATH", "/app/chroma_db")
     collection_name: str = "production_documents"
     similarity_metric: str = "cosine"
-    # Configuración adicional para ChromaDB
-    hnsw_space: str = "cosine"
-    anonymized_telemetry: bool = False  # Deshabilitar telemetría
 
 @dataclass
 class SearchConfig:
