@@ -107,28 +107,19 @@ class ProductionRAGSystem:
             return None
     
     def initialize(self, document_sources: List[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Inicializa el sistema con documentos"""
+        """Inicializa el sistema con documentos desde GitHub Pages"""
         try:
             # Limpiar colección existente primero
-            #self.vector_store.clear_collection()
+            self.vector_store.clear_collection()
             
             if document_sources is None:
-                # Fuentes por defecto MEJORADAS
+                # CONFIGURACIÓN AUTOMÁTICA - DETECTA TODOS LOS DOCUMENTOS
                 document_sources = [
                     {
-                        "type": "raw_text",
-                        "texts": [
-                            "San Andrés es una isla colombiana ubicada en el mar Caribe, a 775 km al noroeste de la costa continental de Colombia.",
-                            "El archipiélago de San Andrés, Providencia y Santa Catalina es un departamento de Colombia situado en aguas del mar Caribe.",
-                            "San Andrés es conocida por sus playas de arena blanca, aguas cristalinas y arrecifes de coral ideales para el buceo.",
-                            "Para llegar a San Andrés se puede tomar un vuelo desde varias ciudades de Colombia como Bogotá, Medellín o Cartagena.",
-                            "El clima en San Andrés es tropical con temperaturas que oscilan entre 26°C y 32°C durante todo el año.",
-                            "La isla de San Andrés tiene una superficie de 26 km² y es la más grande del archipiélago.",
-                            "El idioma oficial en San Andrés es el español, pero también se habla criollo sanandresano e inglés.",
-                            "La economía de San Andrés se basa principalmente en el turismo y el comercio libre.",
-                            "Los vikingos eran pueblos nórdicos originarios de Escandinavia entre los siglos VIII y XI.",
-                            "Python es un lenguaje de programación interpretado, de alto nivel y de propósito general."
-                        ]
+                        "type": "github_pages_auto",  # ← NUEVO TIPO PARA DETECCIÓN AUTOMÁTICA
+                        "base_url": "https://fjmendez20.github.io/Documentos_RAG",
+                        "file_pattern": "doc*.pdf",   # ← PATRÓN PARA doc1.pdf, doc2.pdf, etc.
+                        "max_files": 50               # ← MÁXIMO NÚMERO DE ARCHIVOS A BUSCAR
                     }
                 ]
             
@@ -138,7 +129,7 @@ class ProductionRAGSystem:
                 all_documents.extend(documents)
             
             if not all_documents:
-                return {"success": False, "message": "No se pudieron cargar documentos"}
+                return {"success": False, "message": "No se pudieron cargar documentos desde las fuentes"}
             
             # Procesar documentos
             logger.info(f"Dividiendo {len(all_documents)} documentos en chunks...")
@@ -153,7 +144,7 @@ class ProductionRAGSystem:
                     "success": True,
                     "documents_loaded": len(all_documents),
                     "chunks_created": len(chunks),
-                    "message": f"Sistema inicializado con {len(chunks)} chunks"
+                    "message": f"Sistema inicializado con {len(chunks)} chunks desde {len(all_documents)} documentos"
                 }
             else:
                 return {"success": False, "message": "Error almacenando documentos"}
