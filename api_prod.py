@@ -1,7 +1,7 @@
 import logging
 import sys
 import os
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -34,14 +34,14 @@ logger = logging.getLogger(__name__)
 # Inicializar FastAPI
 app = FastAPI(
     title="RAG Production API",
-    description="API de producción para sistema RAG con documentos externos",
+    description="API de producción para sistema RAG",
     version="1.0.0"
 )
 
-# Configurar CORS para producción
+# Configurar CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.getenv("ALLOWED_ORIGINS", "*").split(","),
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -64,13 +64,7 @@ class QueryResponse(BaseModel):
     processing_time: float
 
 class InitializeRequest(BaseModel):
-    document_sources: List[Dict[str, Any]]
-
-class InitializeResponse(BaseModel):
-    success: bool
-    documents_loaded: int
-    chunks_created: int
-    message: str
+    document_sources: List[Dict[str, Any]] = None
 
 class SystemInfoResponse(BaseModel):
     document_count: int
@@ -108,21 +102,29 @@ class ProductionRAGSystem:
             logger.error(f"Error configurando LLM: {e}")
             return None
     
-    def initialize(self, document_sources: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Inicializa el sistema con documentos desde fuentes externas"""
+    def initialize(self, document_sources: List[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Inicializa el sistema con documentos"""
         try:
-            all_documents = []
+            if document_sources is None:
+                # Fuentes por defecto
+                document_sources = [
+                    {
+                        "type": "raw_text",
+                        "texts": [
+                            "Python es un lenguaje de programación interpretado, de alto nivel y de propósito general.",
+                            "Los sistemas RAG combinan recuperación de información con generación de texto.",
+                            "Los vikingos eran pueblos nórdicos originarios de Escandinavia entre los siglos VIII y XI."
+                        ]
+                    }
+                ]
             
+            all_documents = []
             for source in document_sources:
-                logger.info(f"Cargando desde fuente: {source.get('type')}")
                 documents = self.document_loader.load_from_source(source)
                 all_documents.extend(documents)
             
             if not all_documents:
-                return {
-                    "success": False,
-                    "message": "No se pudieron cargar documentos desde las fuentes"
-                }
+                return {"success": False, "message": "No se pudieron cargar documentos"}
             
             # Procesar documentos
             chunks = self.document_splitter.split_documents(all_documents)
@@ -137,17 +139,11 @@ class ProductionRAGSystem:
                     "message": f"Sistema inicializado con {len(chunks)} chunks"
                 }
             else:
-                return {
-                    "success": False,
-                    "message": "Error almacenando documentos en BD vectorial"
-                }
+                return {"success": False, "message": "Error almacenando documentos"}
                 
         except Exception as e:
             logger.error(f"Error en inicialización: {e}")
-            return {
-                "success": False,
-                "message": f"Error durante inicialización: {str(e)}"
-            }
+            return {"success": False, "message": f"Error: {str(e)}"}
     
     def query(self, question: str, n_results: int = 3, use_llm: bool = True) -> Dict[str, Any]:
         """Realiza una consulta al sistema"""
@@ -156,16 +152,8 @@ class ProductionRAGSystem:
         
         try:
             if not self.initialized:
-                return {
-                    "question": question,
-                    "answer": "El sistema no está inicializado. Llama a /initialize primero.",
-                    "retrieved_documents": [],
-                    "document_count": 0,
-                    "status": "not_initialized",
-                    "answer_type": "error",
-                    "llm_used": False,
-                    "processing_time": time.time() - start_time
-                }
+                # Auto-inicializar si no está inicializado
+                self.initialize()
             
             # Recuperar documentos
             retrieval_result = self.retriever.retrieve(question, n_results)
@@ -236,7 +224,7 @@ class ProductionRAGSystem:
             "document_count": info.get('document_count', 0),
             "llm_configured": self.llm_client is not None,
             "status": "initialized" if self.initialized else "not_initialized",
-            "environment": os.getenv("RAG_ENVIRONMENT", "development")
+            "environment": os.getenv("RAG_ENVIRONMENT", "production")
         }
 
 # Instancia global del sistema
@@ -259,18 +247,16 @@ async def health_check():
 async def get_system_info():
     return rag_system.get_system_info()
 
-@app.post("/initialize", response_model=InitializeResponse)
-async def initialize_system(request: InitializeRequest):
-    """Inicializa el sistema con documentos desde fuentes externas"""
-    result = rag_system.initialize(request.document_sources)
+@app.post("/initialize")
+async def initialize_system(request: InitializeRequest = None):
+    """Inicializa el sistema con documentos"""
+    if request and request.document_sources:
+        result = rag_system.initialize(request.document_sources)
+    else:
+        result = rag_system.initialize()
     
     if result["success"]:
-        return InitializeResponse(
-            success=True,
-            documents_loaded=result["documents_loaded"],
-            chunks_created=result["chunks_created"],
-            message=result["message"]
-        )
+        return result
     else:
         raise HTTPException(status_code=400, detail=result["message"])
 
@@ -283,15 +269,6 @@ async def query_system(request: QueryRequest):
         use_llm=request.use_llm
     )
     return QueryResponse(**result)
-
-# Manejo de errores
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    logger.error(f"Error no manejado: {exc}")
-    return JSONResponse(
-        status_code=500,
-        content={"detail": "Error interno del servidor"}
-    )
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))

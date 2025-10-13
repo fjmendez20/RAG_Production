@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: rag-api
+    name: rag-api-production
     env: python
     plan: free
     buildCommand: pip install --upgrade pip setuptools wheel && pip install -r requirements.txt
