@@ -3,7 +3,7 @@ fastapi==0.104.1
 uvicorn==0.24.0
 python-dotenv==1.0.0
 
-# ChromaDB sin dependencias problemáticas
+# ChromaDB sin compilación
 chromadb==0.4.22
 
 # Sentence transformers SIN compilación
@@ -20,5 +20,5 @@ requests==2.31.0
 pydantic==1.10.12
 typing-extensions==4.8.0
 
-# Evitar tokenizers que necesitan Rust
-# NO incluir: transformers, tokenizers, torch
+# Evitar compilación
+--no-binary=all
