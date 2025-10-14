@@ -18,27 +18,26 @@ sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 from src.config.settings import AppConfig
 from src.document_processing.loaders_prod import ProductionDocumentLoader
 from src.document_processing.splitters import DocumentSplitter
-from src.embeddings.vector_store import VectorStoreManager
-from src.retrieval.retriever import RAGRetriever
+from src.simple_rag import SimpleRAG  # ← NUEVO IMPORT
 from src.llm.external_llm import ExternalLLM
 
-# Suprimir logs de telemetría de ChromaDB
-logging.getLogger('chromadb.telemetry.product.posthog').setLevel(logging.CRITICAL)
-logging.getLogger('chromadb.telemetry.product').setLevel(logging.CRITICAL)
-
-# Tu configuración actual de logging
+# Configurar logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[logging.StreamHandler(sys.stdout)]
 )
 
+# Suprimir logs de ChromaDB
+logging.getLogger('chromadb.telemetry.product.posthog').setLevel(logging.CRITICAL)
+logging.getLogger('chromadb.telemetry.product').setLevel(logging.CRITICAL)
+
 logger = logging.getLogger(__name__)
 
 # Inicializar FastAPI
 app = FastAPI(
-    title="RAG Production API",
-    description="API de producción para sistema RAG",
+    title="RAG Liviano API",
+    description="API de producción para sistema RAG sin embeddings",
     version="1.0.0"
 )
 
@@ -54,7 +53,7 @@ app.add_middleware(
 # Modelos Pydantic
 class QueryRequest(BaseModel):
     question: str
-    n_results: int = 4  # Cambiado a 4 por defecto
+    n_results: int = 3
     use_llm: bool = True
 
 class QueryResponse(BaseModel):
@@ -76,18 +75,17 @@ class SystemInfoResponse(BaseModel):
     status: str
     environment: str
 
-# Sistema RAG para producción
+# Sistema RAG liviano
 class ProductionRAGSystem:
     def __init__(self):
         self.config = AppConfig()
         self.document_loader = ProductionDocumentLoader()
         self.document_splitter = DocumentSplitter()
-        self.vector_store = VectorStoreManager(self.config)
-        self.retriever = RAGRetriever(self.vector_store)
+        self.rag_engine = SimpleRAG()  # ← USAR RAG SIMPLE
         self.llm_client = self._setup_llm()
         self.initialized = False
         
-        logger.info("✅ Sistema RAG de producción inicializado")
+        logger.info("✅ Sistema RAG liviano inicializado")
     
     def _setup_llm(self):
         """Configura el cliente LLM"""
@@ -107,19 +105,18 @@ class ProductionRAGSystem:
             return None
     
     def initialize(self, document_sources: List[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Inicializa el sistema con documentos desde GitHub Pages"""
+        """Inicializa el sistema con documentos"""
         try:
-            # Limpiar colección existente primero
-            self.vector_store.clear_collection()
+            # Limpiar documentos existentes
+            self.rag_engine.clear_documents()
             
             if document_sources is None:
-                # CONFIGURACIÓN AUTOMÁTICA - DETECTA TODOS LOS DOCUMENTOS
+                # Configuración automática para GitHub Pages
                 document_sources = [
                     {
-                        "type": "github_pages_auto",  # ← NUEVO TIPO PARA DETECCIÓN AUTOMÁTICA
+                        "type": "github_pages",
                         "base_url": "https://fjmendez20.github.io/Documentos_RAG",
-                        "file_pattern": "doc*.pdf",   # ← PATRÓN PARA doc1.pdf, doc2.pdf, etc.
-                        "max_files": 50               # ← MÁXIMO NÚMERO DE ARCHIVOS A BUSCAR
+                        "files": ["doc1.pdf"]
                     }
                 ]
             
@@ -135,8 +132,9 @@ class ProductionRAGSystem:
             logger.info(f"Dividiendo {len(all_documents)} documentos en chunks...")
             chunks = self.document_splitter.split_documents(all_documents)
             
-            logger.info(f"Agregando {len(chunks)} chunks a la base vectorial...")
-            success = self.vector_store.add_documents(chunks)
+            # Usar el RAG simple (sin ChromaDB, sin embeddings)
+            logger.info(f"Agregando {len(chunks)} chunks al RAG liviano...")
+            success = self.rag_engine.add_documents(chunks)
             
             if success:
                 self.initialized = True
@@ -144,7 +142,7 @@ class ProductionRAGSystem:
                     "success": True,
                     "documents_loaded": len(all_documents),
                     "chunks_created": len(chunks),
-                    "message": f"Sistema inicializado con {len(chunks)} chunks desde {len(all_documents)} documentos"
+                    "message": f"Sistema inicializado con {len(chunks)} chunks"
                 }
             else:
                 return {"success": False, "message": "Error almacenando documentos"}
@@ -153,7 +151,7 @@ class ProductionRAGSystem:
             logger.error(f"Error en inicialización: {e}")
             return {"success": False, "message": f"Error: {str(e)}"}
     
-    def query(self, question: str, n_results: int = 4, use_llm: bool = True) -> Dict[str, Any]:
+    def query(self, question: str, n_results: int = 3, use_llm: bool = True) -> Dict[str, Any]:
         """Realiza una consulta al sistema"""
         import time
         start_time = time.time()
@@ -164,19 +162,22 @@ class ProductionRAGSystem:
                 logger.info("Sistema no inicializado, auto-inicializando...")
                 self.initialize()
             
-            # Recuperar documentos usando el método con fallback
-            retrieval_result = self.retriever.retrieve_with_fallback(question, n_results)
-            status = retrieval_result["status"]
+            # Buscar documentos relevantes
+            retrieval_result = self.rag_engine.search_with_fallback(question, n_results)
+            status = "success" if retrieval_result else "no_relevant_documents"
             llm_used = False
             
             if status == "success":
                 if use_llm and self.llm_client:
-                    context = self.retriever.get_context(question, n_results)
+                    # Preparar contexto para LLM
+                    context = "\n\n".join([f"[Documento {i+1}]: {doc['content'][:300]}..." 
+                                         for i, doc in enumerate(retrieval_result)])
+                    
                     llm_result = self.llm_client.generate_response(
                         prompt=question,
                         context=context,
                         question=question,
-                        max_tokens=500
+                        max_tokens=300
                     )
                     
                     if llm_result["success"]:
@@ -184,29 +185,22 @@ class ProductionRAGSystem:
                         answer_type = "llm"
                         llm_used = True
                     else:
-                        answer = self.retriever.get_direct_answer(question, n_results)
+                        answer = self._get_direct_answer(retrieval_result)
                         answer_type = "direct_fallback"
                 else:
-                    answer = self.retriever.get_direct_answer(question, n_results)
+                    answer = self._get_direct_answer(retrieval_result)
                     answer_type = "direct"
-            
-            elif status == "no_relevant_documents":
+            else:
                 answer = "No encontré información relevante en los documentos. ¿Podrías reformular tu pregunta?"
                 answer_type = "no_documents"
-            elif status == "low_similarity":
-                answer = "Encontré información relacionada pero no exactamente lo que buscas. ¿Quieres que te muestre lo que encontré?"
-                answer_type = "low_similarity"
-            else:
-                answer = f"Error técnico: {retrieval_result.get('error', 'Desconocido')}"
-                answer_type = "error"
             
             processing_time = time.time() - start_time
             
             return {
                 "question": question,
                 "answer": answer,
-                "retrieved_documents": retrieval_result["results"],
-                "document_count": retrieval_result["count"],
+                "retrieved_documents": retrieval_result,
+                "document_count": len(retrieval_result),
                 "status": status,
                 "answer_type": answer_type,
                 "llm_used": llm_used,
@@ -218,7 +212,7 @@ class ProductionRAGSystem:
             processing_time = time.time() - start_time
             return {
                 "question": question,
-                "answer": "Error técnico procesando la consulta. Por favor, intenta nuevamente.",
+                "answer": "Error técnico procesando la consulta.",
                 "retrieved_documents": [],
                 "document_count": 0,
                 "status": "error",
@@ -227,11 +221,34 @@ class ProductionRAGSystem:
                 "processing_time": round(processing_time, 2)
             }
     
+    def _get_direct_answer(self, documents: List[Dict[str, Any]]) -> str:
+        """Genera respuesta directa basada en documentos"""
+        if not documents:
+            return "No se encontró información relevante."
+        
+        best_doc = max(documents, key=lambda x: x['similarity'])
+        similarity = best_doc.get('similarity', 0)
+        
+        # Determinar confianza
+        if similarity >= 0.7:
+            confidence = "alta confianza"
+        elif similarity >= 0.5:
+            confidence = "buena confianza" 
+        elif similarity >= 0.3:
+            confidence = "confianza moderada"
+        else:
+            confidence = "información relacionada"
+        
+        content = best_doc['content']
+        if len(content) > 400:
+            content = content[:400] + "..."
+        
+        return f"Basado en la información más relevante ({confidence}, similitud: {similarity:.2f}):\n\n{content}"
+    
     def get_system_info(self) -> Dict[str, Any]:
         """Obtiene información del sistema"""
-        info = self.vector_store.get_collection_info()
         return {
-            "document_count": info.get('document_count', 0),
+            "document_count": self.rag_engine.get_document_count(),
             "llm_configured": self.llm_client is not None,
             "status": "initialized" if self.initialized else "not_initialized",
             "environment": os.getenv("RAG_ENVIRONMENT", "production")
@@ -240,52 +257,10 @@ class ProductionRAGSystem:
 # Instancia global del sistema
 rag_system = ProductionRAGSystem()
 
-# Endpoints
+# Endpoints (mantener los mismos que antes)
 @app.get("/")
 async def root():
-    return {"message": "RAG Production API", "status": "running"}
-
-#endpoint temporal 
-@app.post("/debug/load-documents")
-async def debug_load_documents():
-    """Endpoint para debuguear la carga de documentos"""
-    try:
-        from src.document_processing.loaders_prod import ProductionDocumentLoader
-        
-        loader = ProductionDocumentLoader()
-        
-        # Probar conexión con GitHub Pages
-        test_result = loader.test_github_pages_connection("https://fjmendez20.github.io/Documentos_RAG")
-        
-        # Intentar cargar doc1.pdf específicamente
-        document_sources = [{
-            "type": "github_pages",
-            "base_url": "https://fjmendez20.github.io/Documentos_RAG",
-            "files": ["doc1.pdf"]
-        }]
-        
-        documents = loader.load_from_source(document_sources[0])
-        
-        # Analizar el contenido extraído
-        content_analysis = []
-        for i, doc in enumerate(documents):
-            content_analysis.append({
-                "document_index": i,
-                "content_length": len(doc),
-                "content_preview": doc[:500] + "..." if len(doc) > 500 else doc,
-                "is_empty": len(doc.strip()) == 0,
-                "has_text": any(char.isalpha() for char in doc)
-            })
-        
-        return {
-            "test_connection": test_result,
-            "documents_loaded": len(documents),
-            "content_analysis": content_analysis,
-            "raw_documents": documents if len(documents) <= 3 else ["... demasiados documentos para mostrar ..."]
-        }
-        
-    except Exception as e:
-        return {"error": str(e)}
+    return {"message": "RAG Liviano API", "status": "running"}
 
 @app.get("/health")
 async def health_check():
@@ -324,9 +299,9 @@ async def query_system(request: QueryRequest):
 
 @app.post("/clear")
 async def clear_system():
-    """Limpia la base de datos vectorial"""
+    """Limpia la base de datos"""
     try:
-        rag_system.vector_store.clear_collection()
+        rag_system.rag_engine.clear_documents()
         rag_system.initialized = False
         return {"success": True, "message": "Sistema limpiado correctamente"}
     except Exception as e:
