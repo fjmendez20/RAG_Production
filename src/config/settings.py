@@ -7,20 +7,20 @@ load_dotenv()
 @dataclass
 class EmbeddingConfig:
     # Modelo más pequeño y rápido
-    model_name: str = "sentence-transformers/paraphrase-MiniLM-L3-v2"
+    model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
     device: str = "cpu"
     normalize_embeddings: bool = True
 
 @dataclass
 class SplitterConfig:
-    chunk_size: int = 800  # Aumentado para mejor contexto
-    chunk_overlap: int = 100  # Aumentado para mejor continuidad
+    chunk_size: int = 400  # Aumentado para mejor contexto
+    chunk_overlap: int = 50  # Aumentado para mejor continuidad
     separators: tuple = ("\n\n", "\n", ". ", "? ", "! ", " ", "")
 
 @dataclass
 class VectorStoreConfig:
     # Usar path dentro del contenedor
-    persist_directory: str = os.getenv("CHROMA_DB_PATH", "/app/chroma_db")
+    persist_directory: str = os.getenv("CHROMA_DB_PATH", "/tmp/chroma_db")
     collection_name: str = "production_documents"
     similarity_metric: str = "cosine"
 

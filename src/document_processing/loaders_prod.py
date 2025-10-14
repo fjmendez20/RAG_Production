@@ -286,10 +286,7 @@ class ProductionDocumentLoader:
             return ""
     
     def _extract_text_from_pdf(self, pdf_content: bytes) -> str:
-        """Extrae texto de un PDF con múltiples métodos"""
-        extracted_text = ""
-        
-        # Método 1: pypdf (primario)
+        """Extrae texto de PDF usando solo pypdf (más liviano)"""
         try:
             from pypdf import PdfReader
             from io import BytesIO
@@ -297,56 +294,27 @@ class ProductionDocumentLoader:
             with BytesIO(pdf_content) as pdf_file:
                 reader = PdfReader(pdf_file)
                 text = ""
-                for page in reader.pages:
+                
+                # Limitar número de páginas si es muy grande
+                max_pages = 20
+                for i, page in enumerate(reader.pages):
+                    if i >= max_pages:
+                        break
                     page_text = page.extract_text()
                     if page_text:
                         text += page_text + "\n"
+                
                 extracted_text = text.strip()
                 if extracted_text:
-                    logger.info("✅ PDF extraído con pypdf")
+                    logger.info(f"✅ PDF extraído con pypdf ({len(extracted_text)} caracteres)")
                     return extracted_text
+                else:
+                    logger.warning("PDF extraído pero texto vacío")
+                    return ""
+                    
         except Exception as e:
-            logger.warning(f"pypdf no pudo extraer texto: {e}")
-        
-        # Método 2: PyMuPDF (fallback - muy potente)
-        try:
-            import fitz
-            doc = fitz.open(stream=pdf_content, filetype="pdf")
-            text = ""
-            for page in doc:
-                page_text = page.get_text()
-                if page_text:
-                    text += page_text + "\n"
-            doc.close()
-            extracted_text = text.strip()
-            if extracted_text:
-                logger.info("✅ PDF extraído con PyMuPDF")
-                return extracted_text
-        except ImportError:
-            logger.info("PyMuPDF no disponible")
-        except Exception as e:
-            logger.warning(f"PyMuPDF no pudo extraer texto: {e}")
-        
-        # Método 3: pdfplumber (fallback - bueno para PDFs complejos)
-        try:
-            import pdfplumber
-            with pdfplumber.open(stream=pdf_content) as pdf:
-                text = ""
-                for page in pdf.pages:
-                    page_text = page.extract_text()
-                    if page_text:
-                        text += page_text + "\n"
-                extracted_text = text.strip()
-                if extracted_text:
-                    logger.info("✅ PDF extraído con pdfplumber")
-                    return extracted_text
-        except ImportError:
-            logger.info("pdfplumber no disponible")
-        except Exception as e:
-            logger.warning(f"pdfplumber no pudo extraer texto: {e}")
-        
-        logger.error("❌ No se pudo extraer texto del PDF con ningún método")
-        return ""
+            logger.error(f"❌ Error extrayendo PDF con pypdf: {e}")
+            return ""
     
     def _extract_text_from_html(self, html_content: bytes) -> str:
         """Extrae texto limpio de HTML"""
