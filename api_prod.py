@@ -18,7 +18,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 from src.config.settings import AppConfig
 from src.document_processing.loaders_prod import ProductionDocumentLoader
 from src.document_processing.splitters import DocumentSplitter
-from src.simple_rag import SimpleRAG  # ← NUEVO IMPORT
+from src.lightweight_vector_store import LightweightVectorStore  # ← NUEVO IMPORT
 from src.llm.external_llm import ExternalLLM
 
 # Configurar logging
@@ -28,16 +28,12 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)]
 )
 
-# Suprimir logs de ChromaDB
-logging.getLogger('chromadb.telemetry.product.posthog').setLevel(logging.CRITICAL)
-logging.getLogger('chromadb.telemetry.product').setLevel(logging.CRITICAL)
-
 logger = logging.getLogger(__name__)
 
 # Inicializar FastAPI
 app = FastAPI(
-    title="RAG Liviano API",
-    description="API de producción para sistema RAG sin embeddings",
+    title="RAG con Embeddings Externos API",
+    description="API de producción para sistema RAG con embeddings de Hugging Face",
     version="1.0.0"
 )
 
@@ -50,7 +46,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Modelos Pydantic
+# Modelos Pydantic (mantener igual)
 class QueryRequest(BaseModel):
     question: str
     n_results: int = 3
@@ -74,18 +70,19 @@ class SystemInfoResponse(BaseModel):
     llm_configured: bool
     status: str
     environment: str
+    vector_store_info: Dict[str, Any]
 
-# Sistema RAG liviano
+# Sistema RAG con embeddings externos
 class ProductionRAGSystem:
     def __init__(self):
         self.config = AppConfig()
         self.document_loader = ProductionDocumentLoader()
         self.document_splitter = DocumentSplitter()
-        self.rag_engine = SimpleRAG()  # ← USAR RAG SIMPLE
+        self.vector_store = LightweightVectorStore(self.config)  # ← NUEVO VECTOR STORE
         self.llm_client = self._setup_llm()
         self.initialized = False
         
-        logger.info("✅ Sistema RAG liviano inicializado")
+        logger.info("✅ Sistema RAG con embeddings externos inicializado")
     
     def _setup_llm(self):
         """Configura el cliente LLM"""
@@ -107,8 +104,8 @@ class ProductionRAGSystem:
     def initialize(self, document_sources: List[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Inicializa el sistema con documentos"""
         try:
-            # Limpiar documentos existentes
-            self.rag_engine.clear_documents()
+            # Limpiar almacén existente
+            self.vector_store.clear_documents()
             
             if document_sources is None:
                 # Configuración automática para GitHub Pages
@@ -132,17 +129,19 @@ class ProductionRAGSystem:
             logger.info(f"Dividiendo {len(all_documents)} documentos en chunks...")
             chunks = self.document_splitter.split_documents(all_documents)
             
-            # Usar el RAG simple (sin ChromaDB, sin embeddings)
-            logger.info(f"Agregando {len(chunks)} chunks al RAG liviano...")
-            success = self.rag_engine.add_documents(chunks)
+            # Añadir al almacén vectorial (usará embeddings externos)
+            logger.info(f"Agregando {len(chunks)} chunks al almacén vectorial...")
+            success = self.vector_store.add_documents(chunks)
             
             if success:
                 self.initialized = True
+                store_info = self.vector_store.get_store_info()
                 return {
                     "success": True,
                     "documents_loaded": len(all_documents),
                     "chunks_created": len(chunks),
-                    "message": f"Sistema inicializado con {len(chunks)} chunks"
+                    "store_info": store_info,
+                    "message": f"Sistema inicializado con {len(chunks)} chunks usando embeddings externos"
                 }
             else:
                 return {"success": False, "message": "Error almacenando documentos"}
@@ -162,22 +161,22 @@ class ProductionRAGSystem:
                 logger.info("Sistema no inicializado, auto-inicializando...")
                 self.initialize()
             
-            # Buscar documentos relevantes
-            retrieval_result = self.rag_engine.search_with_fallback(question, n_results)
+            # Buscar documentos relevantes usando embeddings semánticos
+            retrieval_result = self.vector_store.search_with_fallback(question, n_results)
             status = "success" if retrieval_result else "no_relevant_documents"
             llm_used = False
             
             if status == "success":
                 if use_llm and self.llm_client:
                     # Preparar contexto para LLM
-                    context = "\n\n".join([f"[Documento {i+1}]: {doc['content'][:300]}..." 
+                    context = "\n\n".join([f"[Documento {i+1} - Similitud: {doc['similarity']:.2f}]: {doc['content'][:400]}..." 
                                          for i, doc in enumerate(retrieval_result)])
                     
                     llm_result = self.llm_client.generate_response(
                         prompt=question,
                         context=context,
                         question=question,
-                        max_tokens=300
+                        max_tokens=400
                     )
                     
                     if llm_result["success"]:
@@ -229,38 +228,41 @@ class ProductionRAGSystem:
         best_doc = max(documents, key=lambda x: x['similarity'])
         similarity = best_doc.get('similarity', 0)
         
-        # Determinar confianza
-        if similarity >= 0.7:
+        # Determinar confianza basada en similitud semántica
+        if similarity >= 0.8:
+            confidence = "muy alta confianza"
+        elif similarity >= 0.6:
             confidence = "alta confianza"
-        elif similarity >= 0.5:
+        elif similarity >= 0.4:
             confidence = "buena confianza" 
-        elif similarity >= 0.3:
-            confidence = "confianza moderada"
         else:
-            confidence = "información relacionada"
+            confidence = "confianza moderada"
         
         content = best_doc['content']
-        if len(content) > 400:
-            content = content[:400] + "..."
+        if len(content) > 500:
+            content = content[:500] + "..."
         
-        return f"Basado en la información más relevante ({confidence}, similitud: {similarity:.2f}):\n\n{content}"
+        return f"Basado en la información más relevante ({confidence}, similitud semántica: {similarity:.2f}):\n\n{content}"
     
     def get_system_info(self) -> Dict[str, Any]:
         """Obtiene información del sistema"""
+        store_info = self.vector_store.get_store_info()
         return {
-            "document_count": self.rag_engine.get_document_count(),
+            "document_count": store_info["total_documents"],
             "llm_configured": self.llm_client is not None,
             "status": "initialized" if self.initialized else "not_initialized",
-            "environment": os.getenv("RAG_ENVIRONMENT", "production")
+            "environment": os.getenv("RAG_ENVIRONMENT", "production"),
+            "vector_store_info": store_info,
+            "embeddings_source": "Hugging Face API"
         }
 
 # Instancia global del sistema
 rag_system = ProductionRAGSystem()
 
-# Endpoints (mantener los mismos que antes)
+# Endpoints (mantener igual)
 @app.get("/")
 async def root():
-    return {"message": "RAG Liviano API", "status": "running"}
+    return {"message": "RAG con Embeddings Externos API", "status": "running"}
 
 @app.get("/health")
 async def health_check():
@@ -301,7 +303,7 @@ async def query_system(request: QueryRequest):
 async def clear_system():
     """Limpia la base de datos"""
     try:
-        rag_system.rag_engine.clear_documents()
+        rag_system.vector_store.clear_documents()
         rag_system.initialized = False
         return {"success": True, "message": "Sistema limpiado correctamente"}
     except Exception as e:
