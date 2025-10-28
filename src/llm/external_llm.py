@@ -28,14 +28,13 @@ class ExternalLLM:
     def generate_response(self, prompt: str, context: str, question: str, max_tokens: int = 500) -> Dict[str, Any]:
         """Genera respuesta usando OpenAI API directamente"""
         try:
-            system_message = """Eres un asistente que responde preguntas basándose ÚNICAMENTE en el contexto proporcionado."""
+            system_message = """Eres un asistente que responde preguntas basándose ÚNICAMENTE en el CONTEXTO. 
+            Si no tienes informacion sobre la PREGUNTA indica amablemente que no se encuentra en tu base de conocimiento."""
             
             user_message = f"""CONTEXTO:
                 {context}
 
-                PREGUNTA: {question}
-
-                Responde basándote ÚNICAMENTE en el contexto:"""
+                PREGUNTA: {question}"""
             
             payload = {
                 "model": self.model,
