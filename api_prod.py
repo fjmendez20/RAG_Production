@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import List, Dict, Any
+from src.hybrid_rag import HybridRAG
 import uvicorn
 from dotenv import load_dotenv
 
@@ -78,11 +79,11 @@ class ProductionRAGSystem:
         self.config = AppConfig()
         self.document_loader = ProductionDocumentLoader()
         self.document_splitter = DocumentSplitter()
-        self.vector_store = LightweightVectorStore(self.config)  # ← NUEVO VECTOR STORE
+        self.rag_engine = HybridRAG()  # ← USAR SISTEMA HÍBRIDO
         self.llm_client = self._setup_llm()
         self.initialized = False
         
-        logger.info("✅ Sistema RAG con embeddings externos inicializado")
+        logger.info("✅ Sistema RAG híbrido inicializado")
     
     def _setup_llm(self):
         """Configura el cliente LLM"""
