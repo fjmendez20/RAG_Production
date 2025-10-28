@@ -6,7 +6,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import List, Dict, Any
-from src.hybrid_rag import HybridRAG
 import uvicorn
 from dotenv import load_dotenv
 
@@ -19,7 +18,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 from src.config.settings import AppConfig
 from src.document_processing.loaders_prod import ProductionDocumentLoader
 from src.document_processing.splitters import DocumentSplitter
-from src.lightweight_vector_store import LightweightVectorStore  # ← NUEVO IMPORT
+from src.hybrid_rag import HybridRAG  # ← CORREGIDO: Usar HybridRAG
 from src.llm.external_llm import ExternalLLM
 
 # Configurar logging
@@ -33,8 +32,8 @@ logger = logging.getLogger(__name__)
 
 # Inicializar FastAPI
 app = FastAPI(
-    title="RAG con Embeddings Externos API",
-    description="API de producción para sistema RAG con embeddings de Hugging Face",
+    title="RAG Híbrido API",
+    description="API de producción para sistema RAG con embeddings externos y fuzzy matching",
     version="1.0.0"
 )
 
@@ -47,7 +46,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Modelos Pydantic (mantener igual)
+# Modelos Pydantic
 class QueryRequest(BaseModel):
     question: str
     n_results: int = 3
@@ -71,15 +70,15 @@ class SystemInfoResponse(BaseModel):
     llm_configured: bool
     status: str
     environment: str
-    vector_store_info: Dict[str, Any]
+    search_method: str
 
-# Sistema RAG con embeddings externos
+# Sistema RAG híbrido
 class ProductionRAGSystem:
     def __init__(self):
         self.config = AppConfig()
         self.document_loader = ProductionDocumentLoader()
         self.document_splitter = DocumentSplitter()
-        self.rag_engine = HybridRAG()  # ← USAR SISTEMA HÍBRIDO
+        self.rag_engine = HybridRAG()  # ← CORREGIDO: Usar HybridRAG
         self.llm_client = self._setup_llm()
         self.initialized = False
         
@@ -105,8 +104,8 @@ class ProductionRAGSystem:
     def initialize(self, document_sources: List[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Inicializa el sistema con documentos"""
         try:
-            # Limpiar almacén existente
-            self.vector_store.clear_documents()
+            # Limpiar documentos existentes
+            self.rag_engine.clear_documents()
             
             if document_sources is None:
                 # Configuración automática para GitHub Pages
@@ -130,19 +129,19 @@ class ProductionRAGSystem:
             logger.info(f"Dividiendo {len(all_documents)} documentos en chunks...")
             chunks = self.document_splitter.split_documents(all_documents)
             
-            # Añadir al almacén vectorial (usará embeddings externos)
-            logger.info(f"Agregando {len(chunks)} chunks al almacén vectorial...")
-            success = self.vector_store.add_documents(chunks)
+            # Usar el RAG híbrido
+            logger.info(f"Agregando {len(chunks)} chunks al sistema RAG...")
+            success = self.rag_engine.add_documents(chunks)
             
             if success:
                 self.initialized = True
-                store_info = self.vector_store.get_store_info()
+                system_info = self.rag_engine.get_system_info()
                 return {
                     "success": True,
                     "documents_loaded": len(all_documents),
                     "chunks_created": len(chunks),
-                    "store_info": store_info,
-                    "message": f"Sistema inicializado con {len(chunks)} chunks usando embeddings externos"
+                    "system_info": system_info,
+                    "message": f"Sistema inicializado con {len(chunks)} chunks usando {system_info['search_method']}"
                 }
             else:
                 return {"success": False, "message": "Error almacenando documentos"}
@@ -162,8 +161,8 @@ class ProductionRAGSystem:
                 logger.info("Sistema no inicializado, auto-inicializando...")
                 self.initialize()
             
-            # Buscar documentos relevantes usando embeddings semánticos
-            retrieval_result = self.vector_store.search_with_fallback(question, n_results)
+            # Buscar documentos relevantes
+            retrieval_result = self.rag_engine.search_with_fallback(question, n_results)
             status = "success" if retrieval_result else "no_relevant_documents"
             llm_used = False
             
@@ -228,8 +227,9 @@ class ProductionRAGSystem:
         
         best_doc = max(documents, key=lambda x: x['similarity'])
         similarity = best_doc.get('similarity', 0)
+        method = best_doc.get('method', 'unknown')
         
-        # Determinar confianza basada en similitud semántica
+        # Determinar confianza
         if similarity >= 0.8:
             confidence = "muy alta confianza"
         elif similarity >= 0.6:
@@ -243,27 +243,29 @@ class ProductionRAGSystem:
         if len(content) > 500:
             content = content[:500] + "..."
         
-        return f"Basado en la información más relevante ({confidence}, similitud semántica: {similarity:.2f}):\n\n{content}"
+        method_text = "búsqueda semántica" if method == "semantic" else "búsqueda por similitud"
+        
+        return f"Basado en la información más relevante ({confidence}, similitud: {similarity:.2f} - {method_text}):\n\n{content}"
     
     def get_system_info(self) -> Dict[str, Any]:
         """Obtiene información del sistema"""
-        store_info = self.vector_store.get_store_info()
+        rag_info = self.rag_engine.get_system_info()
         return {
-            "document_count": store_info["total_documents"],
+            "document_count": rag_info["total_documents"],
             "llm_configured": self.llm_client is not None,
             "status": "initialized" if self.initialized else "not_initialized",
             "environment": os.getenv("RAG_ENVIRONMENT", "production"),
-            "vector_store_info": store_info,
-            "embeddings_source": "Hugging Face API"
+            "search_method": rag_info["search_method"],
+            "using_embeddings": rag_info["using_embeddings"]
         }
 
 # Instancia global del sistema
 rag_system = ProductionRAGSystem()
 
-# Endpoints (mantener igual)
+# Endpoints
 @app.get("/")
 async def root():
-    return {"message": "RAG con Embeddings Externos API", "status": "running"}
+    return {"message": "RAG Híbrido API", "status": "running"}
 
 @app.get("/health")
 async def health_check():
@@ -304,7 +306,7 @@ async def query_system(request: QueryRequest):
 async def clear_system():
     """Limpia la base de datos"""
     try:
-        rag_system.vector_store.clear_documents()
+        rag_system.rag_engine.clear_documents()
         rag_system.initialized = False
         return {"success": True, "message": "Sistema limpiado correctamente"}
     except Exception as e:
