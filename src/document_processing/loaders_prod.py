@@ -9,7 +9,7 @@ import re
 logger = logging.getLogger(__name__)
 
 class ProductionDocumentLoader:
-    """Loader de documentos para producción desde GitHub Pages con detección automática"""
+    """Loader de documentos para producción desde GitHub Pages con detección exacta via GitHub API"""
     
     def __init__(self):
         self.supported_types = ['github_pages', 'github_pages_auto', 'url', 'raw_text']
@@ -20,11 +20,8 @@ class ProductionDocumentLoader:
         source_type = source_config.get('type')
         
         if source_type == 'github_pages_auto':
-            return self._load_from_github_pages_auto(
-                source_config['base_url'],
-                source_config.get('file_pattern', 'doc*.pdf'),
-                source_config.get('max_files', 20)
-            )
+            # NUEVO: Carga automática usando GitHub API
+            return self.load_all_pdfs_from_repo(source_config['base_url'])
         elif source_type == 'github_pages':
             return self._load_from_github_pages(
                 source_config['base_url'],
@@ -37,6 +34,149 @@ class ProductionDocumentLoader:
             return source_config.get('texts', [])
         else:
             raise ValueError(f"Tipo de fuente no soportado: {source_type}")
+    
+    def get_exact_files_from_repo(self, github_pages_url: str) -> List[str]:
+        """Obtiene la lista EXACTA de archivos del repositorio usando GitHub API"""
+        try:
+            # Extraer owner y repo de la URL de GitHub Pages
+            repo_info = self._extract_repo_info_from_pages_url(github_pages_url)
+            if not repo_info:
+                logger.error("No se pudo extraer información del repositorio")
+                return []
+            
+            owner = repo_info['owner']
+            repo = repo_info['repo']
+            
+            logger.info(f"📂 Buscando archivos en repositorio: {owner}/{repo}")
+            
+            # Usar GitHub API para obtener contenido del repositorio
+            api_url = f"https://api.github.com/repos/{owner}/{repo}/contents/"
+            
+            # Si tienes token, úsalo para mayor límite de requests
+            headers = {}
+            github_token = os.getenv("GITHUB_TOKEN")
+            if github_token:
+                headers["Authorization"] = f"token {github_token}"
+            
+            response = requests.get(api_url, headers=headers, timeout=10)
+            
+            if response.status_code == 200:
+                contents = response.json()
+                pdf_files = []
+                
+                for item in contents:
+                    if item.get('type') == 'file' and item.get('name', '').lower().endswith('.pdf'):
+                        pdf_files.append(item['name'])
+                        logger.info(f"✅ Encontrado: {item['name']}")
+                
+                logger.info(f"📊 Total de archivos PDF encontrados: {len(pdf_files)}")
+                return pdf_files
+                
+            elif response.status_code == 403:
+                # Límite de API excedido, usar método alternativo
+                logger.warning("Límite de GitHub API excedido, usando método alternativo")
+                return self._discover_files_fallback(github_pages_url)
+            else:
+                logger.error(f"Error GitHub API: {response.status_code} - {response.text}")
+                return self._discover_files_fallback(github_pages_url)
+                
+        except Exception as e:
+            logger.error(f"Error obteniendo archivos del repo: {e}")
+            return self._discover_files_fallback(github_pages_url)
+    
+    def _extract_repo_info_from_pages_url(self, github_pages_url: str) -> Dict[str, str]:
+        """Extrae owner y repo de la URL de GitHub Pages"""
+        try:
+            # Para URLs como: https://username.github.io/repo-name/
+            parsed = urlparse(github_pages_url)
+            
+            if 'github.io' in parsed.netloc:
+                # username.github.io → owner = username
+                owner = parsed.netloc.split('.')[0]
+                
+                # /repo-name/ → repo = repo-name
+                path_parts = parsed.path.strip('/').split('/')
+                repo = path_parts[0] if path_parts else None
+                
+                if owner and repo:
+                    return {'owner': owner, 'repo': repo}
+            
+            logger.error(f"No se pudo extraer info de: {github_pages_url}")
+            return {}
+            
+        except Exception as e:
+            logger.error(f"Error extrayendo info del repo: {e}")
+            return {}
+    
+    def _discover_files_fallback(self, base_url: str) -> List[str]:
+        """Método de fallback si la API no funciona"""
+        logger.info("Usando método de descubrimiento alternativo...")
+        
+        # Probar los archivos más comunes
+        test_files = []
+        for i in range(1, 20):
+            test_files.extend([
+                f"doc{i}.pdf", f"documento{i}.pdf", f"archivo{i}.pdf",
+                f"doc_{i}.pdf", f"document_{i}.pdf", f"file{i}.pdf"
+            ])
+        
+        # Agregar nombres sin números
+        common_names = [
+            "documento.pdf", "archivo.pdf", "informacion.pdf", "datos.pdf",
+            "manual.pdf", "guia.pdf", "tutorial.pdf", "documentacion.pdf"
+        ]
+        test_files.extend(common_names)
+        
+        discovered_files = []
+        for test_file in test_files:
+            test_url = f"{base_url.rstrip('/')}/{test_file}"
+            if self._check_file_exists(test_url):
+                discovered_files.append(test_file)
+                logger.info(f"✅ Encontrado (fallback): {test_file}")
+        
+        return discovered_files
+    
+    def load_all_pdfs_from_repo(self, github_pages_url: str) -> List[str]:
+        """Carga TODOS los PDFs del repositorio usando lista exacta"""
+        try:
+            # Obtener lista exacta de archivos PDF
+            pdf_files = self.get_exact_files_from_repo(github_pages_url)
+            
+            if not pdf_files:
+                logger.warning("No se encontraron archivos PDF en el repositorio")
+                return []
+            
+            documents = []
+            successful_files = []
+            
+            for pdf_file in pdf_files:
+                try:
+                    url = f"{github_pages_url.rstrip('/')}/{pdf_file}"
+                    logger.info(f"📥 Descargando: {url}")
+                    
+                    response = requests.get(url, timeout=30)
+                    response.raise_for_status()
+                    
+                    # Extraer contenido del PDF
+                    content = self._extract_content_from_file(response.content, pdf_file, url)
+                    if content and len(content.strip()) > 10:
+                        documents.append(content)
+                        successful_files.append(pdf_file)
+                        logger.info(f"✅ Cargado: {pdf_file} ({len(content)} caracteres)")
+                    else:
+                        logger.warning(f"⚠️ Contenido vacío: {pdf_file}")
+                        
+                except Exception as e:
+                    logger.error(f"❌ Error cargando {pdf_file}: {e}")
+                    continue
+            
+            logger.info(f"📊 Resumen final: {len(successful_files)}/{len(pdf_files)} archivos cargados")
+            logger.info(f"📝 Archivos exitosos: {successful_files}")
+            return documents
+            
+        except Exception as e:
+            logger.error(f"Error en carga desde repo: {e}")
+            return []
     
     def _load_from_github_pages_auto(self, base_url: str, file_pattern: str = 'doc*.pdf', max_files: int = 20) -> List[str]:
         """Carga documentos automáticamente desde GitHub Pages detectando archivos"""
@@ -133,50 +273,6 @@ class ProductionDocumentLoader:
                 logger.error(f"Error con pdfplumber: {e}")
         
         return ""
-    
-    def _extract_repo_info(self, github_pages_url: str) -> Dict[str, str]:
-        """Extrae información del repositorio de la URL de GitHub Pages"""
-        try:
-            parsed = urlparse(github_pages_url)
-            path_parts = parsed.path.strip('/').split('/')
-            
-            # Para URLs como https://username.github.io/repo-name/
-            if 'github.io' in parsed.netloc:
-                if len(path_parts) >= 1:
-                    repo_name = path_parts[0]
-                    username = parsed.netloc.split('.')[0]
-                    return {'owner': username, 'repo': repo_name}
-            
-            return {}
-            
-        except Exception as e:
-            logger.error(f"Error extrayendo info del repo: {e}")
-            return {}
-    
-    def _get_repo_files_via_api(self, owner: str, repo: str) -> List[str]:
-        """Intenta obtener lista de archivos via GitHub API"""
-        try:
-            api_url = f"https://api.github.com/repos/{owner}/{repo}/contents/"
-            response = requests.get(api_url, timeout=10)
-            
-            if response.status_code == 200:
-                files_data = response.json()
-                file_paths = []
-                
-                for item in files_data:
-                    if isinstance(item, dict) and item.get('type') == 'file':
-                        file_name = item.get('name', '')
-                        if any(file_name.endswith(ext) for ext in self.supported_extensions):
-                            file_paths.append(file_name)
-                
-                return file_paths
-            else:
-                logger.info(f"GitHub API no disponible (status: {response.status_code})")
-                return []
-                
-        except Exception as e:
-            logger.info(f"GitHub API no disponible: {e}")
-            return []
     
     def _discover_files_by_pattern(self, base_url: str, file_pattern: str, max_files: int = 20) -> List[str]:
         """Descubre archivos probando patrones comunes"""
@@ -396,16 +492,22 @@ class ProductionDocumentLoader:
             response = requests.get(base_url, timeout=10)
             status = "✅ Conectado" if response.status_code == 200 else f"❌ Error {response.status_code}"
             
-            test_file_url = urljoin(base_url.rstrip('/') + '/', 'doc1.pdf')
-            test_response = requests.head(test_file_url, timeout=5)
-            file_status = "✅ Existe" if test_response.status_code == 200 else "❌ No existe"
+            # Probar con varios archivos comunes
+            test_files = ["doc1.pdf", "documento.pdf", "archivo.pdf"]
+            file_status = {}
             
-            discovered_files = self._discover_files_by_pattern(base_url, 'doc*.pdf', 10)
+            for test_file in test_files:
+                test_url = f"{base_url.rstrip('/')}/{test_file}"
+                test_response = requests.head(test_url, timeout=5)
+                file_status[test_file] = "✅ Existe" if test_response.status_code == 200 else "❌ No existe"
+            
+            # Descubrir TODOS los PDFs usando GitHub API
+            discovered_files = self.get_exact_files_from_repo(base_url)
             
             return {
                 "base_url": base_url,
                 "connection_status": status,
-                "doc1.pdf_status": file_status,
+                "test_files_status": file_status,
                 "discovered_files": discovered_files,
                 "total_files_found": len(discovered_files)
             }
@@ -414,7 +516,7 @@ class ProductionDocumentLoader:
             return {
                 "base_url": base_url,
                 "connection_status": f"❌ Error: {str(e)}",
-                "doc1.pdf_status": "No probado",
+                "test_files_status": {},
                 "discovered_files": [],
                 "total_files_found": 0
             }

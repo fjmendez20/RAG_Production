@@ -108,17 +108,24 @@ class ProductionRAGSystem:
             self.rag_engine.clear_documents()
             
             if document_sources is None:
-                # Configuración automática para GitHub Pages
+                # CONFIGURACIÓN AUTOMÁTICA - CARGA TODOS LOS PDFs DEL REPO
                 document_sources = [
                     {
-                        "type": "github_pages",
-                        "base_url": "https://fjmendez20.github.io/Documentos_RAG",
-                        "files": ["doc1.pdf"]
+                        "type": "github_pages_auto",  # ← Esto usa GitHub API
+                        "base_url": "https://fjmendez20.github.io/Documentos_RAG"
                     }
                 ]
             
             all_documents = []
+            pdf_files_found = []
+            
             for source in document_sources:
+                if source.get('type') == 'github_pages_auto':
+                    # Obtener lista exacta de archivos
+                    pdf_files = self.document_loader.get_exact_files_from_repo(source['base_url'])
+                    pdf_files_found = pdf_files
+                    logger.info(f"📁 Archivos PDF encontrados en repo: {pdf_files}")
+                
                 documents = self.document_loader.load_from_source(source)
                 all_documents.extend(documents)
             
@@ -311,6 +318,43 @@ async def clear_system():
         return {"success": True, "message": "Sistema limpiado correctamente"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error limpiando sistema: {str(e)}")
+
+@app.get("/explore-repo")
+async def explore_repository():
+    """Explora el repositorio y muestra todos los archivos disponibles"""
+    try:
+        from src.document_processing.loaders_prod import ProductionDocumentLoader
+        
+        loader = ProductionDocumentLoader()
+        base_url = "https://fjmendez20.github.io/Documentos_RAG"
+        
+        # Obtener lista exacta de archivos
+        pdf_files = loader.get_exact_files_from_repo(base_url)
+        
+        # Verificar cada archivo
+        file_status = []
+        for pdf_file in pdf_files:
+            url = f"{base_url}/{pdf_file}"
+            exists = loader._check_file_exists(url)
+            file_status.append({
+                "filename": pdf_file,
+                "url": url,
+                "exists": exists,
+                "status": "✅ Disponible" if exists else "❌ No accesible"
+            })
+        
+        repo_info = loader._extract_repo_info_from_pages_url(base_url)
+        
+        return {
+            "repository_info": repo_info,
+            "base_url": base_url,
+            "total_pdf_files": len(pdf_files),
+            "files": file_status,
+            "message": f"Encontrados {len(pdf_files)} archivos PDF en el repositorio"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error explorando repositorio: {str(e)}")
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
