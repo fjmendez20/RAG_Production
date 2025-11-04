@@ -14,8 +14,8 @@ class HuggingFaceEmbeddings:
         self.model_name = model_name
         self.api_token = os.getenv("HF_API_TOKEN")
         
-        # URL CORREGIDA - usar el endpoint correcto de Inference API
-        self.base_url = f"https://api-inference.huggingface.co/models/{model_name}"
+        # URL CORREGIDA - usar el nuevo endpoint de router
+        self.base_url = f"https://router.huggingface.co/hf-inference/models/{model_name}"
         self.headers = {
             "Authorization": f"Bearer {self.api_token}",
             "Content-Type": "application/json"
@@ -28,7 +28,6 @@ class HuggingFaceEmbeddings:
             return []
         
         try:
-            # Para el endpoint de embeddings, necesitamos usar el formato correcto
             response = requests.post(
                 self.base_url,
                 headers=self.headers,
@@ -36,7 +35,7 @@ class HuggingFaceEmbeddings:
                     "inputs": texts,
                     "options": {"wait_for_model": True}
                 },
-                timeout=120  # Aumentar timeout
+                timeout=120
             )
             
             if response.status_code == 200:
@@ -44,13 +43,11 @@ class HuggingFaceEmbeddings:
                 logger.info(f"✅ Embeddings obtenidos para {len(texts)} textos")
                 return embeddings
             elif response.status_code == 503:
-                # Modelo está cargando, esperar y reintentar
                 logger.info("🔄 Modelo cargando, esperando...")
                 time.sleep(10)
                 return self.get_embeddings(texts)
             else:
                 logger.error(f"❌ Error API: {response.status_code} - {response.text}")
-                # Intentar con un enfoque alternativo
                 return self._get_embeddings_alternative(texts)
                 
         except Exception as e:
@@ -60,14 +57,15 @@ class HuggingFaceEmbeddings:
     def _get_embeddings_alternative(self, texts: List[str]) -> List[List[float]]:
         """Enfoque alternativo para obtener embeddings"""
         try:
-            # Intentar con el endpoint de feature extraction
-            feature_extraction_url = f"https://api-inference.huggingface.co/pipeline/feature-extraction/{self.model_name}"
+            # Alternativa usando el endpoint específico para embeddings
+            embeddings_url = f"https://router.huggingface.co/hf-inference/models/{self.model_name}"
             
             response = requests.post(
-                feature_extraction_url,
+                embeddings_url,
                 headers=self.headers,
                 json={
                     "inputs": texts,
+                    "task": "feature-extraction",
                     "options": {"wait_for_model": True}
                 },
                 timeout=120
